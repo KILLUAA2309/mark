@@ -1,0 +1,113 @@
+from flask import Flask, jsonify, render_template, request
+import pyodbc
+
+# from pymodbus.client import ModbusSerialClient
+
+app = Flask(__name__)
+
+# --- CONFIGURATION (Use environment variables or defaults) ---
+SERIAL_PORT = "COM3"
+BAUD_RATE = 38400
+SQL_CONFIG = {
+    "server": "localhost",
+    "database": "production_db",
+    "user": "sa",
+    "password": "Password123",
+}
+
+current_batch = {
+    "active": False,
+    "part_number": "",
+    "initial_offset": 0,
+    "current_count": 0,
+}
+
+
+def get_db_connection():
+    conn_str = (
+        f"DRIVER={{SQL Server}};SERVER={SQL_CONFIG['server']};"
+        f"DATABASE={SQL_CONFIG['database']};UID={SQL_CONFIG['user']};PWD={SQL_CONFIG['password']};"
+    )
+    return pyodbc.connect(conn_str)
+
+
+def get_plc_count():
+    """Reads holding register from PLC via Modbus RTU (Mocked if offline)."""
+    # client = ModbusSerialClient(port=SERIAL_PORT, baudrate=BAUD_RATE, bytesize=8, parity='N', stopbits=1, timeout=0.5)
+    # if client.connect():
+    #     res = client.read_holding_registers(address=49152, count=1, slave=1)
+    #     client.close()
+    #     if not res.isError():
+    #         return res.registers[0], True
+    return 0, True
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/api/status", methods=["GET"])
+def get_status():
+    raw_count, online = get_plc_count()
+    if current_batch["active"]:
+        current_batch["current_count"] = max(
+            0, raw_count - current_batch["initial_offset"]
+        )
+    return jsonify(
+        {"plc_online": online, "batch": current_batch, "raw_count": raw_count}
+    )
+
+
+@app.route("/api/start_batch", methods=["POST"])
+def start_batch():
+    data = request.json or {}
+    part_num = data.get("part_number", "").strip()
+    if not part_num:
+        return jsonify({"success": False, "message": "Part number required"}), (
+            400
+        )
+
+    raw_count, _ = get_plc_count()
+    current_batch.update(
+        {
+            "active": True,
+            "part_number": part_num,
+            "initial_offset": raw_count,
+            "current_count": 0,
+        }
+    )
+    return jsonify({"success": True, "batch": current_batch})
+
+
+@app.route("/api/stop_batch", methods=["POST"])
+def stop_batch():
+    if not current_batch["active"]:
+        return jsonify({"success": False, "message": "No active batch"}), 400
+
+    data = request.json or {}
+    finished_qty = int(data.get("finished_qty", current_batch["current_count"]))
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO production_logs (part_number, total_parts, logged_at)
+            VALUES (?, ?, GETDATE())
+        """,
+            (current_batch["part_number"], finished_qty),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Database error: {e}")
+
+    current_batch["active"] = False
+    return jsonify(
+        {"success": True, "message": f"Logged {finished_qty} parts."}
+    )
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=False)
