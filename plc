@@ -1,0 +1,26 @@
+from pymodbus.client import ModbusSerialClient
+
+PORT = "COM3"
+REGISTER_ADDR = 49152  # Target holding register (e.g., CTD1)
+
+for baud in [9600, 19200, 38400]:
+    for slave_id in range(1, 6):
+        client = ModbusSerialClient(
+            port=PORT, baudrate=baud, parity="N", stopbits=1, bytesize=8, timeout=0.3
+        )
+        if client.connect():
+            try:
+                res = client.read_holding_registers(
+                    address=REGISTER_ADDR, count=1, slave=slave_id
+                )
+                if not res.isError():
+                    print(
+                        f"Found PLC -> Baud: {baud} | Slave ID: {slave_id} | Value: {res.registers[0]}"
+                    )
+                    client.close()
+                    exit()
+            except Exception:
+                pass
+            client.close()
+
+print("No response from PLC. Verify wiring and COM settings.")
