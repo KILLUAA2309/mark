@@ -9,10 +9,7 @@ app = Flask(__name__)
 SERIAL_PORT = "COM3"
 BAUD_RATE = 38400
 SQL_CONFIG = {
-    "server": "localhost",
-    "database": "production_db",
-    "user": "sa",
-    "password": "Password123",
+    
 }
 
 current_batch = {
